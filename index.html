@@ -1014,19 +1014,19 @@ const PROXY_URL = localStorage.getItem('cellar-proxy-url') || 'https://script.go
 
 /* ── API (via proxy) ── */
 async function api(msgs, max=1200){
-  // If proxy URL is set, route through Apps Script (works everywhere including iPhone Safari)
   if(PROXY_URL){
-    const r = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action:'ai', messages:msgs, max_tokens:max, model:'claude-haiku-4-5'})
-    });
+    // GET request with encoded payload — bypasses CORS preflight entirely
+    // Apps Script doGet() handles this without CORS issues on any browser
+    const payload = encodeURIComponent(JSON.stringify({
+      action:'ai', messages:msgs, max_tokens:max, model:'claude-haiku-4-5'
+    }));
+    const r = await fetch(PROXY_URL + '?payload=' + payload);
     if(!r.ok) throw new Error('Proxy error ' + r.status);
     const d = await r.json();
-    if(d.error) throw new Error(d.error);
+    if(d.error) throw new Error(d.error + (d.detail?' — '+d.detail:''));
     return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
   }
-  // Fallback: direct call (works in Chrome desktop, fails in iPhone Safari)
+  // Fallback: direct call (Chrome desktop only)
   const r = await fetch('https://api.anthropic.com/v1/messages',{
     method:'POST',
     headers:{
@@ -1046,12 +1046,11 @@ async function api(msgs, max=1200){
 async function proxySave(entry){
   if(!PROXY_URL) return false;
   try{
-    const r=await fetch(PROXY_URL,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'save',entry,user:CU?CU.username:'guest'})
-    });
-    const d=await r.json();
+    const payload = encodeURIComponent(JSON.stringify({
+      action:'save', entry, user:CU?CU.username:'guest'
+    }));
+    const r = await fetch(PROXY_URL + '?payload=' + payload);
+    const d = await r.json();
     return d.success||false;
   }catch(e){console.warn('Sheet save failed:',e.message);return false;}
 }
@@ -1060,14 +1059,14 @@ async function proxySave(entry){
 async function proxySavePhoto(base64, mimeType, filename){
   if(!PROXY_URL) return null;
   try{
-    const r=await fetch(PROXY_URL,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
+    // Photos are large — fire-and-forget with no-cors, URL not returned
+    fetch(PROXY_URL, {
+      method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
       body:JSON.stringify({action:'photo',data:base64,mimeType,filename})
-    });
-    const d=await r.json();
-    return d.url||null;
-  }catch(e){console.warn('Photo save failed:',e.message);return null;}
+    }).catch(()=>{});
+    return null;
+  }catch(e){return null;}
 }
 
 function bic(){const c=[];['f','b','c'].forEach(k=>{if(ST.ph[k])c.push({type:'image',source:{type:'base64',media_type:ST.ph[k].t,data:ST.ph[k].d}});});return c;}
@@ -1347,7 +1346,7 @@ function saveGoogleSettings(){
     document.getElementById('proxy-status').textContent='Testing connection…';
     fetch(proxyUrl, {
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{'Content-Type':'text/plain'},
         body:JSON.stringify({action:'ai',messages:[{role:'user',content:[{type:'text',text:'ping'}]}],max_tokens:5})
       })
       .then(r=>r.json())
